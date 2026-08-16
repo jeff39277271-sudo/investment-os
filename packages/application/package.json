@@ -1,0 +1,14 @@
+{
+  "name": "@investment-os/application",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": { "build": "tsc -b", "typecheck": "tsc -b" },
+  "dependencies": {
+    "@investment-os/db": "workspace:*",
+    "@investment-os/domain": "workspace:*",
+    "@investment-os/shared": "workspace:*",
+    "zod": "^3.24.1"
+  }
+}

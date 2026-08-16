@@ -1,0 +1,15 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/shared" },
+    { "path": "packages/domain" },
+    { "path": "packages/db" },
+    { "path": "packages/application" },
+    { "path": "packages/market-data" },
+    { "path": "packages/line-ui" },
+    { "path": "packages/ai-tools" },
+    { "path": "apps/api" },
+    { "path": "apps/worker" },
+    { "path": "apps/dashboard" }
+  ]
+}
