@@ -87,6 +87,9 @@ importers:
 
   packages/db:
     dependencies:
+      decimal.js:
+        specifier: ^10.4.3
+        version: 10.6.0
       drizzle-orm:
         specifier: ^0.38.2
         version: 0.38.4(@types/pg@8.21.0)(pg@8.23.0)

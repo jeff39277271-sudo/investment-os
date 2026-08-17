@@ -62,4 +62,11 @@ describe('portfolio calculator', () => {
     expect(() => calculatePositions([sell, buy])).not.toThrow();
     expect(calculatePositions([sell, buy]).get(instrumentId)?.realizedPnl.toString()).toBe('20');
   });
+
+  it('uses creation time and id as deterministic tie-breakers for equal trade times', () => {
+    const buy = tx('1', 'BUY', '10', '100', { createdAt: new Date('2026-01-01T00:00:01Z') });
+    const sell = tx('2', 'SELL', '10', '120', { createdAt: new Date('2026-01-01T00:00:02Z') });
+    expect(() => calculatePositions([sell, buy])).not.toThrow();
+    expect(calculatePositions([sell, buy]).get(instrumentId)?.realizedPnl.toString()).toBe('200');
+  });
 });

@@ -1,5 +1,6 @@
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { Decimal } from 'decimal.js';
 import * as schema from './schema.js';
 
 export type Database = NodePgDatabase<typeof schema>;
@@ -22,6 +23,30 @@ export class RepositoryConflictError extends Error {
     super(message);
     this.name = 'RepositoryConflictError';
   }
+}
+
+function canonicalDecimal(value: string): string {
+  return new Decimal(value).toString();
+}
+
+function normalizeDraft(record: DraftRecord): DraftRecord {
+  return {
+    ...record,
+    quantity: canonicalDecimal(record.quantity),
+    price: canonicalDecimal(record.price),
+    fee: canonicalDecimal(record.fee),
+    tax: canonicalDecimal(record.tax),
+  };
+}
+
+function normalizeTransaction(record: TransactionRecord): TransactionRecord {
+  return {
+    ...record,
+    quantity: canonicalDecimal(record.quantity),
+    price: canonicalDecimal(record.price),
+    fee: canonicalDecimal(record.fee),
+    tax: canonicalDecimal(record.tax),
+  };
 }
 
 export class InvestmentRepository {
@@ -64,18 +89,18 @@ export class InvestmentRepository {
 
   async findDraftByIdempotency(userId: string, idempotencyKey: string): Promise<DraftRecord | undefined> {
     const [draft] = await this.db.select().from(schema.transactionDrafts).where(and(eq(schema.transactionDrafts.userId, userId), eq(schema.transactionDrafts.idempotencyKey, idempotencyKey))).limit(1);
-    return draft;
+    return draft ? normalizeDraft(draft) : undefined;
   }
 
   async getDraft(draftId: string, userId: string): Promise<DraftRecord | undefined> {
     const [draft] = await this.db.select().from(schema.transactionDrafts).where(and(eq(schema.transactionDrafts.id, draftId), eq(schema.transactionDrafts.userId, userId))).limit(1);
-    return draft;
+    return draft ? normalizeDraft(draft) : undefined;
   }
 
   async createDraft(values: typeof schema.transactionDrafts.$inferInsert): Promise<DraftRecord> {
     try {
       const [draft] = await this.db.insert(schema.transactionDrafts).values(values).returning();
-      return draft;
+      return normalizeDraft(draft);
     } catch (error) {
       if (error instanceof Error && error.message.includes('transaction_drafts_user_id_idempotency_key_unique')) {
         throw new RepositoryConflictError('draft idempotency key already exists');
@@ -90,7 +115,7 @@ export class InvestmentRepository {
       .where(and(eq(schema.transactionDrafts.id, draftId), eq(schema.transactionDrafts.userId, userId), eq(schema.transactionDrafts.status, 'DRAFT')))
       .returning();
     if (!draft) throw new RepositoryConflictError('draft is no longer active');
-    return draft;
+    return normalizeDraft(draft);
   }
 
   async cancelDraft(draftId: string, userId: string): Promise<DraftRecord> {
@@ -99,16 +124,19 @@ export class InvestmentRepository {
       .where(and(eq(schema.transactionDrafts.id, draftId), eq(schema.transactionDrafts.userId, userId), eq(schema.transactionDrafts.status, 'DRAFT')))
       .returning();
     if (!draft) throw new RepositoryConflictError('draft is no longer cancellable');
-    return draft;
+    return normalizeDraft(draft);
   }
 
   async listTransactions(portfolioId: string): Promise<TransactionRecord[]> {
-    return this.db.select().from(schema.transactions).where(eq(schema.transactions.portfolioId, portfolioId));
+    const transactions = await this.db.select().from(schema.transactions)
+      .where(eq(schema.transactions.portfolioId, portfolioId))
+      .orderBy(asc(schema.transactions.tradeAt), asc(schema.transactions.createdAt), asc(schema.transactions.id));
+    return transactions.map(normalizeTransaction);
   }
 
   async getTransaction(transactionId: string): Promise<TransactionRecord | undefined> {
     const [transaction] = await this.db.select().from(schema.transactions).where(eq(schema.transactions.id, transactionId)).limit(1);
-    return transaction;
+    return transaction ? normalizeTransaction(transaction) : undefined;
   }
 
   async confirmDraft(userId: string, draftId: string, confirmationKey: string, values: typeof schema.transactions.$inferInsert): Promise<TransactionRecord> {
@@ -119,23 +147,23 @@ export class InvestmentRepository {
         if (draft.confirmationIdempotencyKey !== confirmationKey) throw new RepositoryConflictError('draft has already been confirmed');
         const [existing] = await tx.select().from(schema.transactions).where(eq(schema.transactions.draftId, draftId)).limit(1);
         if (!existing) throw new RepositoryConflictError('confirmed draft has no transaction');
-        return existing;
+        return normalizeTransaction(existing);
       }
       if (draft.status !== 'DRAFT') throw new RepositoryConflictError(`draft cannot be confirmed from status ${draft.status}`);
       const [transaction] = await tx.insert(schema.transactions).values(values).returning();
       await tx.update(schema.transactionDrafts).set({ status: 'CONFIRMED', confirmationIdempotencyKey: confirmationKey, updatedAt: new Date() }).where(eq(schema.transactionDrafts.id, draftId));
-      return transaction;
+      return normalizeTransaction(transaction);
     });
   }
 
   async voidTransaction(transactionId: string): Promise<TransactionRecord> {
     const [transaction] = await this.db.update(schema.transactions).set({ status: 'VOIDED' }).where(and(eq(schema.transactions.id, transactionId), eq(schema.transactions.status, 'CONFIRMED'))).returning();
     if (!transaction) throw new RepositoryConflictError('transaction is not active');
-    return transaction;
+    return normalizeTransaction(transaction);
   }
 
   async insertTransaction(values: typeof schema.transactions.$inferInsert): Promise<TransactionRecord> {
     const [transaction] = await this.db.insert(schema.transactions).values(values).returning();
-    return transaction;
+    return normalizeTransaction(transaction);
   }
 }

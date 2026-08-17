@@ -21,6 +21,7 @@ export const transactionInputSchema = z.object({
   status: z.enum(['CONFIRMED', 'VOIDED']).default('CONFIRMED'),
   reversalOf: z.string().uuid().nullable().optional(),
   note: z.string().nullable().optional(),
+  createdAt: z.coerce.date().optional(),
   idempotencyKey: z.string().trim().min(1),
 });
 
@@ -97,7 +98,13 @@ function newPosition(instrumentId: string): Position {
 export function calculatePositions(transactions: readonly Transaction[], portfolioId?: string): Map<string, Position> {
   const active = transactions
     .filter((transaction) => transaction.status === 'CONFIRMED')
-    .sort((left, right) => left.tradeAt.getTime() - right.tradeAt.getTime());
+    .sort((left, right) => {
+      const tradeAt = left.tradeAt.getTime() - right.tradeAt.getTime();
+      if (tradeAt !== 0) return tradeAt;
+      const createdAt = (left.createdAt?.getTime() ?? 0) - (right.createdAt?.getTime() ?? 0);
+      if (createdAt !== 0) return createdAt;
+      return left.id.localeCompare(right.id);
+    });
   const positions = new Map<string, Position>();
   for (const transaction of active) {
     if (portfolioId !== undefined && transaction.portfolioId !== portfolioId) {

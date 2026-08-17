@@ -30,7 +30,7 @@ function base(input: Awaited<ReturnType<typeof fixture>>) {
 }
 
 function toDomain(transaction: TransactionRecord) {
-  return { id: transaction.id, portfolioId: transaction.portfolioId, instrumentId: transaction.instrumentId, side: transaction.side, quantity: transaction.quantity, price: transaction.price, currency: transaction.currency, fee: transaction.fee, tax: transaction.tax, tradeAt: transaction.tradeAt, source: transaction.source, status: transaction.status, reversalOf: transaction.reversalOf, note: transaction.note, idempotencyKey: transaction.idempotencyKey } as const;
+  return { id: transaction.id, portfolioId: transaction.portfolioId, instrumentId: transaction.instrumentId, side: transaction.side, quantity: transaction.quantity, price: transaction.price, currency: transaction.currency, fee: transaction.fee, tax: transaction.tax, tradeAt: transaction.tradeAt, createdAt: transaction.createdAt, source: transaction.source, status: transaction.status, reversalOf: transaction.reversalOf, note: transaction.note, idempotencyKey: transaction.idempotencyKey } as const;
 }
 
 integration('PostgreSQL persistence and application safety', () => {
@@ -64,7 +64,8 @@ integration('PostgreSQL persistence and application safety', () => {
     const transactions = await repository.listTransactions(f.portfolio.id);
     const summary = summarizePortfolio(f.portfolio.id, 'TWD', transactions.map(toDomain), new Map([[f.instrument.id, '150']]));
     expect(summary.positions[0].quantity.toString()).toBe('0');
-    expect(summary.realizedPnl.toString()).toBe('550');
+    // Cost = 10×100 + 5×130 = 1,650; proceeds = 15×150 = 2,250; realized P/L = 600.
+    expect(summary.realizedPnl.toString()).toBe('600');
   });
 
   it('rejects oversell during draft validation', async () => {

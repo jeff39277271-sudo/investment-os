@@ -120,6 +120,7 @@ export class TransactionApplicationService {
     const original = await this.requireOwnedTransaction(transactionId, userId);
     if (original.status !== 'CONFIRMED') throw new ApplicationConflictError('only a confirmed transaction can be reversed');
     const transactions = await this.repository.listTransactions(original.portfolioId);
+    const lastCreatedAt = transactions.reduce((latest, transaction) => Math.max(latest, transaction.createdAt.getTime()), 0);
     const reversal: Transaction = {
       id: randomUUID(),
       portfolioId: original.portfolioId,
@@ -135,6 +136,7 @@ export class TransactionApplicationService {
       status: 'CONFIRMED',
       reversalOf: original.id,
       note: `Reversal of ${original.id}`,
+      createdAt: new Date(lastCreatedAt + 1),
       idempotencyKey,
     };
     validateTransaction(reversal);
@@ -191,6 +193,7 @@ export class TransactionApplicationService {
       status: 'CONFIRMED',
       reversalOf: null,
       note: null,
+      createdAt: undefined,
       idempotencyKey: 'draft-validation',
     });
   }
@@ -210,6 +213,7 @@ export class TransactionApplicationService {
       tradeAt: draft.tradeAt,
       source: draft.source,
       status: 'CONFIRMED',
+      createdAt: undefined,
       idempotencyKey: `confirmation:${draft.id}`,
     };
   }
@@ -230,6 +234,7 @@ export class TransactionApplicationService {
       status: transaction.status,
       reversalOf: transaction.reversalOf,
       note: transaction.note,
+      createdAt: transaction.createdAt,
       idempotencyKey: transaction.idempotencyKey,
     };
   }
