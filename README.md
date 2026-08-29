@@ -56,6 +56,16 @@ Phase 2 parser 僅接受 `BUY 2330 100 1250`、`SELL 2330 50 1300` 及同格式�
 
 正式環境需要設定 `LINE_CHANNEL_SECRET` 與 `LINE_CHANNEL_ACCESS_TOKEN`；`.env.example` 只保留空白欄位，不含 secrets。Phase 2 不包含 LLM、行情、警示、新聞、LIFF 或研究功能。
 
+## Phase 3A Market Data Foundation（市場行情基礎層）
+
+`packages/market-data` 定義 provider-agnostic Market Data Provider（供應商無關的行情介面）、Decimal-safe Quote（Decimal 安全行情模型）、Quote Freshness Policy（行情新鮮度政策）與僅限 development/test 的 `FakeMarketDataProvider`。目前 deterministic fake quote 為 `2330 = TWD 1300`、`0050 = TWD 60`；production 未設定 provider 時會明確失敗，且禁止以 fake provider 靜默 fallback。
+
+PostgreSQL `instrument_quotes` 保存 provider quote history 與時間 metadata；`(instrument_id, source, quote_at)` 提供 ingestion Idempotency（行情寫入冪等性），latest quote 依 `quote_at`、`received_at`、`id` deterministic 選取。`transactions` 仍是 holdings source of truth（持倉唯一事實來源），quote 不會建立、修改或刪除交易。
+
+Portfolio valuation（投資組合估值）由 application service 驗證 ownership 與 currency 後，以 transaction ledger 加 latest quote 呼叫既有 deterministic portfolio engine。回傳值保留 `missingPriceInstrumentIds`，並逐一揭露 `FRESH`、`STALE` 或 `MISSING`、quote timestamp 與 source；stale threshold 由 application 注入，不放在 presentation layer。
+
+Phase 3A 刻意不新增 public portfolio/quote API route：目前尚無通用 session/auth API，僅憑 public `portfolioId` 會形成 ownership 漏洞。估值流程已由 application/PostgreSQL integration tests 驗證，待安全 client authentication 建立後再暴露 read-only route。本階段不包含 Fugle/TWSE live provider、WebSocket、alerts、LINE proactive notification、AI、news 或 LIFF。
+
 ## Phase 0 + Phase 1 架構
 
 目前只提供 Backend（後端系統）的 monorepo 基礎、PostgreSQL schema／Migration（資料庫結構遷移）、Transaction Ledger（交易流水帳／交易唯一事實來源）與確定性的 Portfolio Engine（投資組合計算引擎）。Domain Layer（領域核心層）不依賴任何 client、LINE、LIFF、AI 或市場行情 provider。

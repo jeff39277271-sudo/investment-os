@@ -45,6 +45,17 @@ export const instruments = pgTable('instruments', {
   providerSymbol: text('provider_symbol').notNull(),
 }, (table) => ({ instrumentUnique: unique().on(table.symbol, table.exchange) }));
 
+export const instrumentQuotes = pgTable('instrument_quotes', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  instrumentId: uuid('instrument_id').notNull().references(() => instruments.id),
+  price: numeric('price', { precision: 30, scale: 12 }).notNull(),
+  currency: text('currency').notNull(),
+  quoteAt: timestamp('quote_at', { withTimezone: true }).notNull(),
+  receivedAt: timestamp('received_at', { withTimezone: true }).notNull(),
+  source: text('source').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({ quoteIdentityUnique: unique().on(table.instrumentId, table.source, table.quoteAt) }));
+
 export const transactionDrafts = pgTable('transaction_drafts', {
   id: uuid('id').defaultRandom().primaryKey(),
   userId: uuid('user_id').notNull().references(() => users.id),

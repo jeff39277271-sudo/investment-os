@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, lt, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { Decimal } from 'decimal.js';
 import * as schema from './schema.js';
@@ -11,6 +11,7 @@ export type InstrumentRecord = typeof schema.instruments.$inferSelect;
 export type DraftRecord = typeof schema.transactionDrafts.$inferSelect;
 export type TransactionRecord = typeof schema.transactions.$inferSelect;
 export type LineWebhookEventRecord = typeof schema.lineWebhookEvents.$inferSelect;
+export type QuoteRecord = typeof schema.instrumentQuotes.$inferSelect;
 
 export class RepositoryNotFoundError extends Error {
   constructor(message: string) {
@@ -48,6 +49,10 @@ function normalizeTransaction(record: TransactionRecord): TransactionRecord {
     fee: canonicalDecimal(record.fee),
     tax: canonicalDecimal(record.tax),
   };
+}
+
+function normalizeQuote(record: QuoteRecord): QuoteRecord {
+  return { ...record, price: canonicalDecimal(record.price) };
 }
 
 export class InvestmentRepository {
@@ -115,6 +120,31 @@ export class InvestmentRepository {
   async findInstrumentBySymbol(symbol: string): Promise<InstrumentRecord | undefined> {
     const matches = await this.db.select().from(schema.instruments).where(eq(schema.instruments.symbol, symbol)).limit(2);
     return matches.length === 1 ? matches[0] : undefined;
+  }
+
+  async persistQuote(values: typeof schema.instrumentQuotes.$inferInsert): Promise<QuoteRecord> {
+    const [quote] = await this.db.insert(schema.instrumentQuotes).values(values).onConflictDoUpdate({
+      target: [schema.instrumentQuotes.instrumentId, schema.instrumentQuotes.source, schema.instrumentQuotes.quoteAt],
+      set: { price: values.price, currency: values.currency, receivedAt: values.receivedAt },
+    }).returning();
+    return normalizeQuote(quote);
+  }
+
+  async getLatestQuote(instrumentId: string): Promise<QuoteRecord | undefined> {
+    const [quote] = await this.db.select().from(schema.instrumentQuotes)
+      .where(eq(schema.instrumentQuotes.instrumentId, instrumentId))
+      .orderBy(desc(schema.instrumentQuotes.quoteAt), desc(schema.instrumentQuotes.receivedAt), desc(schema.instrumentQuotes.id)).limit(1);
+    return quote ? normalizeQuote(quote) : undefined;
+  }
+
+  async getLatestQuotes(instrumentIds: readonly string[]): Promise<Map<string, QuoteRecord>> {
+    if (instrumentIds.length === 0) return new Map();
+    const quotes = await this.db.select().from(schema.instrumentQuotes)
+      .where(inArray(schema.instrumentQuotes.instrumentId, [...instrumentIds]))
+      .orderBy(asc(schema.instrumentQuotes.instrumentId), desc(schema.instrumentQuotes.quoteAt), desc(schema.instrumentQuotes.receivedAt), desc(schema.instrumentQuotes.id));
+    const latest = new Map<string, QuoteRecord>();
+    for (const quote of quotes) if (!latest.has(quote.instrumentId)) latest.set(quote.instrumentId, normalizeQuote(quote));
+    return latest;
   }
 
   async findLatestActiveDraft(userId: string): Promise<DraftRecord | undefined> {

@@ -1,6 +1,6 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "rootDir": "src", "outDir": "dist" },
-  "references": [{ "path": "../db" }, { "path": "../domain" }, { "path": "../shared" }],
+  "references": [{ "path": "../db" }, { "path": "../domain" }, { "path": "../market-data" }, { "path": "../shared" }],
   "include": ["src"]
 }

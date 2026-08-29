@@ -5,6 +5,7 @@ import {
   summarizePortfolio,
   validateTransaction,
   type Transaction,
+  type PortfolioSummary,
 } from '@investment-os/domain';
 import {
   InvestmentRepository,
@@ -12,6 +13,8 @@ import {
   type TransactionRecord,
 } from '@investment-os/db';
 import type { ClientSource } from '@investment-os/shared';
+import { Decimal } from 'decimal.js';
+import { QuoteFreshnessPolicy, type MarketDataProvider, type Quote, type QuoteFreshness } from '@investment-os/market-data';
 import { z } from 'zod';
 
 const uuid = z.string().uuid();
@@ -268,6 +271,72 @@ export class LineApplicationService {
   failWebhookEvent(eventId: string, error: unknown) {
     const message = error instanceof Error ? error.message : 'unknown LINE webhook failure';
     return this.repository.failLineWebhookEvent(eventId, message);
+  }
+}
+
+export type PortfolioValuation = PortfolioSummary & { quotes: QuoteFreshness[]; valuedAt: Date };
+
+export class MarketDataApplicationService {
+  constructor(
+    private readonly repository: InvestmentRepository,
+    private readonly freshnessPolicy: QuoteFreshnessPolicy,
+    private readonly clock: () => Date = () => new Date(),
+  ) {}
+
+  async refreshQuote(instrumentId: string, provider: MarketDataProvider) {
+    const instrument = await this.repository.getInstrument(instrumentId);
+    if (!instrument) throw new ApplicationConflictError('instrument does not exist');
+    return this.ingestQuote(await provider.getQuote({
+      id: instrument.id, symbol: instrument.symbol, currency: instrument.currency,
+      market: instrument.market, exchange: instrument.exchange, providerSymbol: instrument.providerSymbol,
+    }));
+  }
+
+  async ingestQuote(quote: Quote) {
+    const instrument = await this.repository.getInstrument(quote.instrumentId);
+    if (!instrument || instrument.symbol !== quote.symbol) throw new ApplicationConflictError('quote instrument identity does not match instrument master');
+    if (instrument.currency !== quote.currency) throw new DomainValidationError('quote currency must match instrument currency');
+    if (!quote.source.trim()) throw new DomainValidationError('quote source is required');
+    if (Number.isNaN(quote.quoteAt.getTime()) || Number.isNaN(quote.receivedAt.getTime())) throw new DomainValidationError('quote timestamps must be valid');
+    if (!quote.price.isFinite() || quote.price.lte(0)) throw new DomainValidationError('quote price must be greater than zero');
+    return this.repository.persistQuote({
+      instrumentId: quote.instrumentId, price: quote.price.toString(), currency: quote.currency,
+      quoteAt: quote.quoteAt, receivedAt: quote.receivedAt, source: quote.source,
+    });
+  }
+
+  async getPortfolioValuation(userId: string, portfolioId: string): Promise<PortfolioValuation> {
+    const portfolio = await this.repository.getPortfolio(portfolioId);
+    if (!portfolio || portfolio.userId !== userId) throw new ApplicationAuthorizationError('portfolio does not belong to user');
+    const transactions = await this.repository.listTransactions(portfolioId);
+    const instrumentIds = [...new Set(transactions.map((transaction) => transaction.instrumentId))];
+    const [quoteRecords, instruments] = await Promise.all([
+      this.repository.getLatestQuotes(instrumentIds),
+      Promise.all(instrumentIds.map((instrumentId) => this.repository.getInstrument(instrumentId))),
+    ]);
+    const prices = new Map<string, Decimal>();
+    const valuedAt = this.clock();
+    const quotes = instrumentIds.map((instrumentId, index) => {
+      const quote = quoteRecords.get(instrumentId);
+      const instrument = instruments[index];
+      if (!instrument) throw new ApplicationConflictError('transaction instrument does not exist');
+      if (quote) {
+        if (quote.currency !== instrument.currency || quote.currency !== portfolio.baseCurrency) throw new DomainValidationError('quote currency cannot be mixed with portfolio currency');
+        prices.set(instrumentId, new Decimal(quote.price));
+      }
+      return this.freshnessPolicy.classify(instrumentId, quote ? { quoteAt: quote.quoteAt, receivedAt: quote.receivedAt, source: quote.source } : undefined, valuedAt);
+    });
+    return { ...summarizePortfolio(portfolioId, portfolio.baseCurrency, transactions.map((transaction) => this.toDomainTransaction(transaction)), prices), quotes, valuedAt };
+  }
+
+  private toDomainTransaction(transaction: TransactionRecord): Transaction {
+    return {
+      id: transaction.id, portfolioId: transaction.portfolioId, instrumentId: transaction.instrumentId,
+      side: transaction.side, quantity: transaction.quantity, price: transaction.price, currency: transaction.currency,
+      fee: transaction.fee, tax: transaction.tax, tradeAt: transaction.tradeAt, source: transaction.source,
+      status: transaction.status, reversalOf: transaction.reversalOf, note: transaction.note,
+      createdAt: transaction.createdAt, idempotencyKey: transaction.idempotencyKey,
+    };
   }
 }
 
