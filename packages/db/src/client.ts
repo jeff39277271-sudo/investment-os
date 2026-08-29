@@ -11,3 +11,11 @@ export function createDb(pool: Pool) {
 export function createRepository(databaseUrl: string) {
   return new InvestmentRepository(createDb(new PgPool({ connectionString: databaseUrl })));
 }
+
+export function createRepositoryRuntime(databaseUrl: string) {
+  const pool = new PgPool({ connectionString: databaseUrl });
+  return {
+    repository: new InvestmentRepository(createDb(pool)),
+    close: () => pool.end(),
+  };
+}

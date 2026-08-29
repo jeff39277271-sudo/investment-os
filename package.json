@@ -7,6 +7,8 @@
     "typecheck": "tsc -b",
     "test": "vitest run",
     "build": "tsc -b",
+    "api:dev": "pnpm --filter @investment-os/api dev",
+    "api:start": "pnpm --filter @investment-os/api start",
     "format": "prettier --write .",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"

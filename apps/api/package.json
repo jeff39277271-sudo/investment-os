@@ -2,6 +2,6 @@
   "name": "@investment-os/api",
   "version": "0.1.0",
   "type": "module",
-  "scripts": { "build": "tsc -b", "typecheck": "tsc -b" },
+  "scripts": { "build": "tsc -b", "typecheck": "tsc -b", "dev": "tsc -b && node --watch --env-file=../../.env dist/main.js", "start": "node --env-file=../../.env dist/main.js" },
   "dependencies": { "@investment-os/application": "workspace:*", "@investment-os/db": "workspace:*", "@investment-os/line-ui": "workspace:*" }
 }

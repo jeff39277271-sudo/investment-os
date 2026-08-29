@@ -4,9 +4,18 @@ import type { AddressInfo } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
 import type { LineApplicationService, TransactionApplicationService } from '@investment-os/application';
 import { transactionConfirmationFlex } from '@investment-os/line-ui';
-import { createRequestHandler, FakeLineMessagingClient, LineMessagingApiClient, LineWebhookAdapter, parseTransactionCommand, verifyLineSignature } from './index.js';
+import { createProductionServer, createRequestHandler, FakeLineMessagingClient, LineMessagingApiClient, LineWebhookAdapter, parseTransactionCommand, verifyLineSignature } from './index.js';
 
 describe('LINE adapter primitives', () => {
+  async function withEndpoint(run: (baseUrl: string, adapter: LineWebhookAdapter) => Promise<void>) {
+    const adapter = new LineWebhookAdapter(undefined as unknown as LineApplicationService, undefined as unknown as TransactionApplicationService, new FakeLineMessagingClient());
+    vi.spyOn(adapter, 'handle').mockResolvedValue();
+    const server = createServer(createRequestHandler({ channelSecret: 'secret', adapter }));
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try { await run(`http://127.0.0.1:${(server.address() as AddressInfo).port}`, adapter); }
+    finally { await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); }
+  }
+
   it('accepts a valid LINE signature computed from the unchanged raw body', () => {
     const raw = Buffer.from('{"events":[]}');
     const signature = createHmac('sha256', 'secret').update(raw).digest('base64');
@@ -20,18 +29,29 @@ describe('LINE adapter primitives', () => {
   });
 
   it('rejects an invalid signature at the endpoint before invoking the adapter', async () => {
-    const adapter = new LineWebhookAdapter(undefined as unknown as LineApplicationService, undefined as unknown as TransactionApplicationService, new FakeLineMessagingClient());
-    const handle = vi.spyOn(adapter, 'handle').mockResolvedValue();
-    const server = createServer(createRequestHandler({ channelSecret: 'secret', adapter }));
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    try {
-      const port = (server.address() as AddressInfo).port;
-      const invalid = await fetch(`http://127.0.0.1:${port}/webhooks/line`, { method: 'POST', headers: { 'x-line-signature': 'invalid' }, body: '{"events":[]}' });
-      expect(invalid.status).toBe(401); expect(handle).not.toHaveBeenCalled();
+    await withEndpoint(async (baseUrl, adapter) => {
+      const invalid = await fetch(`${baseUrl}/webhooks/line`, { method: 'POST', headers: { 'x-line-signature': 'invalid' }, body: '{"events":[]}' });
+      expect(invalid.status).toBe(401); expect(adapter.handle).not.toHaveBeenCalled();
       const raw = '{"events":[]}'; const signature = createHmac('sha256', 'secret').update(raw).digest('base64');
-      const valid = await fetch(`http://127.0.0.1:${port}/webhooks/line`, { method: 'POST', headers: { 'x-line-signature': signature }, body: raw });
-      expect(valid.status).toBe(200); expect(handle).toHaveBeenCalledOnce();
-    } finally { await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); }
+      const valid = await fetch(`${baseUrl}/webhooks/line`, { method: 'POST', headers: { 'x-line-signature': signature }, body: raw });
+      expect(valid.status).toBe(200); expect(adapter.handle).toHaveBeenCalledOnce();
+    });
+  });
+
+  it('serves health without LINE authentication and returns 404 for unknown routes', async () => {
+    await withEndpoint(async (baseUrl, adapter) => {
+      const health = await fetch(`${baseUrl}/health`);
+      expect(health.status).toBe(200); expect(await health.json()).toEqual({ status: 'ok' });
+      expect(health.headers.get('content-type')).toContain('application/json');
+      const unknown = await fetch(`${baseUrl}/unknown`);
+      expect(unknown.status).toBe(404); expect(adapter.handle).not.toHaveBeenCalled();
+    });
+  });
+
+  it('fails production server creation on the first missing required environment variable', () => {
+    expect(() => createProductionServer({})).toThrow('Missing required environment variable: DATABASE_URL');
+    expect(() => createProductionServer({ DATABASE_URL: 'postgres://unused' })).toThrow('Missing required environment variable: LINE_CHANNEL_SECRET');
+    expect(() => createProductionServer({ DATABASE_URL: 'postgres://unused', LINE_CHANNEL_SECRET: 'secret' })).toThrow('Missing required environment variable: LINE_CHANNEL_ACCESS_TOKEN');
   });
 
   it('parses only deterministic BUY, SELL, 買 and 賣 commands', () => {

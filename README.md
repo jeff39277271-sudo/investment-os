@@ -6,16 +6,33 @@ Investment OS 是以 LINE + LIFF 為 V1 入口的個人投資紀錄與研究系�
 
 需求：Node.js 22、pnpm 9、Docker Desktop（用於 PostgreSQL integration test）。
 
-```bash
+```powershell
 pnpm install
-Copy-Item .env.example .env
 docker compose up -d postgres
 pnpm db:migrate
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm build
+Copy-Item .env.example .env
+# 使用文字編輯器填入 .env 的 LINE_CHANNEL_SECRET 與 LINE_CHANNEL_ACCESS_TOKEN。
+pnpm api:dev
 ```
+
+`pnpm api:dev` 會先編譯 API，再由 Node.js 22 的 `--env-file` 從 repository root 載入 `.env`，以 watch mode 啟動 `apps/api/dist/main.js`。不需要逐一設定 PowerShell environment variables（環境變數）。預設監聽 `0.0.0.0:3000`；可在 `.env` 以 `PORT` 覆寫。
+
+啟動後可在另一個 PowerShell 視窗確認：
+
+```powershell
+Invoke-WebRequest -UseBasicParsing http://localhost:3000/health | Select-Object StatusCode, Content
+```
+
+應回傳 HTTP 200 與 `{"status":"ok"}`。LINE webhook endpoint 為 `POST http://localhost:3000/webhooks/line`，仍要求有效的 `X-Line-Signature`。實際連接 LINE Developer Console 時，可再使用可信任的 HTTPS tunnel（HTTPS 通道）將 localhost 暴露為公開 HTTPS URL。
+
+Production/start 使用 build output：
+
+```powershell
+pnpm build
+pnpm api:start
+```
+
+`api:start` 不會隱藏 build 缺失或環境設定錯誤；缺少 `DATABASE_URL`、`LINE_CHANNEL_SECRET` 或 `LINE_CHANNEL_ACCESS_TOKEN` 時會指出缺少的變數並立即退出，但不會輸出 secret 值。停止 runtime 可使用 `Ctrl+C`；API 同時支援 `SIGINT` 與 `SIGTERM` graceful shutdown（優雅關閉）。
 
 若要執行 PostgreSQL Integration Test（資料庫整合測試），請在 PowerShell 使用：
 
@@ -26,7 +43,7 @@ pnpm test
 
 這組測試會實際建立 user、portfolio、instrument、draft 與 transaction，驗證 ownership、expiry、confirmation Idempotency（冪等性／避免同一操作被重複執行）、void／reversal 與 portfolio summary。未設定 `RUN_POSTGRES_INTEGRATION` 時，`pnpm test` 只執行不需外部服務的 domain tests；CI 或本機具備 PostgreSQL 時應設定它以執行完整測試。
 
-`.env.example` 僅包含本機開發用的非 secret 設定名稱；請複製成 `.env` 後再依環境調整，禁止提交真實 token 或 API key。
+`.env.example` 僅包含本機開發用的非 secret 設定名稱；請複製成 `.env` 後再依環境調整，禁止提交真實 token 或 API key。`.env` 已由 `.gitignore` 排除。
 
 ## Phase 2 LINE Integration（LINE 整合）
 
