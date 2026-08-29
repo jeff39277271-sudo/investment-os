@@ -8,14 +8,17 @@ Investment OS 是以 LINE + LIFF 為 V1 入口的個人投資紀錄與研究系�
 
 ```powershell
 pnpm install
+Copy-Item .env.example .env
 docker compose up -d postgres
 pnpm db:migrate
-Copy-Item .env.example .env
+pnpm db:seed:dev
 # 使用文字編輯器填入 .env 的 LINE_CHANNEL_SECRET 與 LINE_CHANNEL_ACCESS_TOKEN。
 pnpm api:dev
 ```
 
 `pnpm api:dev` 會先編譯 API，再由 Node.js 22 的 `--env-file` 從 repository root 載入 `.env`，以 watch mode 啟動 `apps/api/dist/main.js`。不需要逐一設定 PowerShell environment variables（環境變數）。預設監聽 `0.0.0.0:3000`；可在 `.env` 以 `PORT` 覆寫。
+
+`pnpm db:seed:dev` 是明確的 Development Seed（開發用種子資料）命令，目前以 `(symbol, exchange)` unique key upsert `2330 台積電` 與 `0050 元大台灣50`。可重複執行且不會產生 duplicate rows（重複資料列）。此 seed 不含價格或行情同步，也不會由 production/API startup 自動執行。
 
 啟動後可在另一個 PowerShell 視窗確認：
 

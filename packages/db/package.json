@@ -4,6 +4,6 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "scripts": { "build": "tsc -b", "typecheck": "tsc -b" },
+  "scripts": { "build": "tsc -b", "typecheck": "tsc -b", "seed:dev": "tsc -b && node --env-file-if-exists=../../.env dist/seed-dev.js" },
   "dependencies": { "decimal.js": "^10.4.3", "drizzle-orm": "^0.38.2", "pg": "^8.13.1" }
 }
