@@ -12,6 +12,10 @@ export type DraftRecord = typeof schema.transactionDrafts.$inferSelect;
 export type TransactionRecord = typeof schema.transactions.$inferSelect;
 export type LineWebhookEventRecord = typeof schema.lineWebhookEvents.$inferSelect;
 export type QuoteRecord = typeof schema.instrumentQuotes.$inferSelect;
+export type AlertRuleRecord = typeof schema.alertRules.$inferSelect;
+export type AlertTriggerEventRecord = typeof schema.alertTriggerEvents.$inferSelect;
+export type AlertEvaluationDecision = { result: string; evaluated: boolean; nextConditionState: 'CLEAR' | 'BREACHED'; trigger: boolean };
+export type AlertEvaluationContext = { rule: AlertRuleRecord; quote?: QuoteRecord; transactions: TransactionRecord[] };
 
 export class RepositoryNotFoundError extends Error {
   constructor(message: string) {
@@ -53,6 +57,14 @@ function normalizeTransaction(record: TransactionRecord): TransactionRecord {
 
 function normalizeQuote(record: QuoteRecord): QuoteRecord {
   return { ...record, price: canonicalDecimal(record.price) };
+}
+
+function normalizeAlertRule(record: AlertRuleRecord): AlertRuleRecord {
+  return { ...record, triggerPrice: canonicalDecimal(record.triggerPrice) };
+}
+
+function normalizeAlertTriggerEvent(record: AlertTriggerEventRecord): AlertTriggerEventRecord {
+  return { ...record, observedPrice: canonicalDecimal(record.observedPrice), triggerPrice: canonicalDecimal(record.triggerPrice) };
 }
 
 export class InvestmentRepository {
@@ -145,6 +157,79 @@ export class InvestmentRepository {
     const latest = new Map<string, QuoteRecord>();
     for (const quote of quotes) if (!latest.has(quote.instrumentId)) latest.set(quote.instrumentId, normalizeQuote(quote));
     return latest;
+  }
+
+  async createAlertRule(values: typeof schema.alertRules.$inferInsert): Promise<AlertRuleRecord> {
+    const [rule] = await this.db.insert(schema.alertRules).values(values).returning();
+    return normalizeAlertRule(rule);
+  }
+
+  async getAlertRule(ruleId: string, userId: string): Promise<AlertRuleRecord | undefined> {
+    const [rule] = await this.db.select().from(schema.alertRules)
+      .where(and(eq(schema.alertRules.id, ruleId), eq(schema.alertRules.userId, userId))).limit(1);
+    return rule ? normalizeAlertRule(rule) : undefined;
+  }
+
+  async listPortfolioAlertRules(portfolioId: string, userId: string): Promise<AlertRuleRecord[]> {
+    const rules = await this.db.select().from(schema.alertRules)
+      .where(and(eq(schema.alertRules.portfolioId, portfolioId), eq(schema.alertRules.userId, userId)))
+      .orderBy(asc(schema.alertRules.createdAt), asc(schema.alertRules.id));
+    return rules.map(normalizeAlertRule);
+  }
+
+  async updateAlertRule(ruleId: string, userId: string, values: Partial<Pick<typeof schema.alertRules.$inferInsert, 'triggerPrice' | 'status' | 'conditionState' | 'lastEvaluatedAt' | 'lastTriggeredAt' | 'updatedAt'>>): Promise<AlertRuleRecord> {
+    const [rule] = await this.db.update(schema.alertRules).set(values)
+      .where(and(eq(schema.alertRules.id, ruleId), eq(schema.alertRules.userId, userId))).returning();
+    if (!rule) throw new RepositoryNotFoundError('alert rule not found');
+    return normalizeAlertRule(rule);
+  }
+
+  async listAlertTriggerEvents(ruleId: string): Promise<AlertTriggerEventRecord[]> {
+    const events = await this.db.select().from(schema.alertTriggerEvents)
+      .where(eq(schema.alertTriggerEvents.alertRuleId, ruleId)).orderBy(asc(schema.alertTriggerEvents.createdAt), asc(schema.alertTriggerEvents.id));
+    return events.map(normalizeAlertTriggerEvent);
+  }
+
+  async evaluateAlertRuleAtomic(
+    ruleId: string,
+    userId: string,
+    evaluatedAt: Date,
+    evaluator: (context: AlertEvaluationContext) => AlertEvaluationDecision,
+  ): Promise<{ rule: AlertRuleRecord; event?: AlertTriggerEventRecord; result: string }> {
+    return this.db.transaction(async (tx) => {
+      const [rawRule] = await tx.select().from(schema.alertRules)
+        .where(and(eq(schema.alertRules.id, ruleId), eq(schema.alertRules.userId, userId))).for('update').limit(1);
+      if (!rawRule) throw new RepositoryNotFoundError('alert rule not found');
+      const rule = normalizeAlertRule(rawRule);
+      const [rawQuote] = await tx.select().from(schema.instrumentQuotes)
+        .where(eq(schema.instrumentQuotes.instrumentId, rule.instrumentId))
+        .orderBy(desc(schema.instrumentQuotes.quoteAt), desc(schema.instrumentQuotes.receivedAt), desc(schema.instrumentQuotes.id)).limit(1);
+      const rawTransactions = await tx.select().from(schema.transactions)
+        .where(eq(schema.transactions.portfolioId, rule.portfolioId))
+        .orderBy(asc(schema.transactions.tradeAt), asc(schema.transactions.createdAt), asc(schema.transactions.id));
+      const quote = rawQuote ? normalizeQuote(rawQuote) : undefined;
+      const decision = evaluator({ rule, quote, transactions: rawTransactions.map(normalizeTransaction) });
+      if (!decision.evaluated) return { rule, result: decision.result };
+
+      let event: AlertTriggerEventRecord | undefined;
+      let result = decision.result;
+      if (decision.trigger) {
+        if (!quote) throw new RepositoryConflictError('trigger decision requires a quote');
+        const inserted = await tx.insert(schema.alertTriggerEvents).values({
+          alertRuleId: rule.id, instrumentId: rule.instrumentId, quoteId: quote.id,
+          observedPrice: quote.price, triggerPrice: rule.triggerPrice, quoteAt: quote.quoteAt, createdAt: evaluatedAt,
+        }).onConflictDoNothing().returning();
+        if (inserted[0]) event = normalizeAlertTriggerEvent(inserted[0]);
+        else result = 'ALREADY_BREACHED';
+      }
+      const [updated] = await tx.update(schema.alertRules).set({
+        conditionState: decision.nextConditionState,
+        lastEvaluatedAt: evaluatedAt,
+        lastTriggeredAt: event ? evaluatedAt : rule.lastTriggeredAt,
+        updatedAt: evaluatedAt,
+      }).where(eq(schema.alertRules.id, rule.id)).returning();
+      return { rule: normalizeAlertRule(updated), event, result };
+    });
   }
 
   async findLatestActiveDraft(userId: string): Promise<DraftRecord | undefined> {

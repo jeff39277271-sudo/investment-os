@@ -32,7 +32,7 @@ integration('market data persistence and valuation', () => {
   beforeAll(async () => { await pool.query('select 1'); });
   beforeEach(async () => {
     now = new Date('2026-08-29T02:05:00.000Z');
-    await pool.query('TRUNCATE TABLE line_webhook_events, instrument_quotes, transactions, transaction_drafts, position_snapshots, instruments, portfolios, user_identities, users CASCADE');
+    await pool.query('TRUNCATE TABLE alert_trigger_events, alert_rules, line_webhook_events, instrument_quotes, transactions, transaction_drafts, position_snapshots, instruments, portfolios, user_identities, users CASCADE');
   });
   afterAll(async () => pool.end());
 

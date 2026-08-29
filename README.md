@@ -66,6 +66,16 @@ Portfolio valuation（投資組合估值）由 application service 驗證 owners
 
 Phase 3A 刻意不新增 public portfolio/quote API route：目前尚無通用 session/auth API，僅憑 public `portfolioId` 會形成 ownership 漏洞。估值流程已由 application/PostgreSQL integration tests 驗證，待安全 client authentication 建立後再暴露 read-only route。本階段不包含 Fugle/TWSE live provider、WebSocket、alerts、LINE proactive notification、AI、news 或 LIFF。
 
+## Phase 3B Alert Rules Engine（警示規則引擎）
+
+`AlertApplicationService` 支援固定價格的 `STOP_LOSS` 與 `TAKE_PROFIT`，以及 create、update threshold、pause、resume、archive、owned read/list 與 deterministic evaluation（確定性判斷）。Rule（規則）以 Decimal-safe `triggerPrice`、`ACTIVE / PAUSED / ARCHIVED` status 與持久化 `CLEAR / BREACHED` condition state 表達；建立時必須驗證 portfolio ownership、instrument/currency 與當前持倉數量大於零。
+
+觸發只發生在 `CLEAR → BREACHED`：STOP_LOSS 使用 `latestPrice <= triggerPrice`，TAKE_PROFIT 使用 `latestPrice >= triggerPrice`。持續 breach 不重複產生 event；價格恢復會 `BREACHED → CLEAR` re-arm（重新武裝），下一次 crossing 才能再次觸發。只有 `FRESH` quote 可以觸發；`STALE`、`MISSING`、無持倉、paused 與 archived 都回傳明確 skipped result，且 stale/missing 不改變 condition state。
+
+PostgreSQL `alert_trigger_events` 是 immutable audit ledger（不可變觸發稽核流水帳），不是 notification delivery（通知投遞紀錄）。Evaluation 以 transaction + rule row `FOR UPDATE` lock，原子更新 condition state 並插入 event；`(alert_rule_id, quote_id)` unique constraint 防止同 rule/quote 併發重複觸發。Trigger 絕不建立 draft、transaction、broker order 或 LINE push。
+
+Phase 3B 沒有新增 public alerts API 或 LINE command，因目前沒有完整 session/auth API。也不包含 live provider、polling、scheduler、worker、notification queue、percentage/trailing stop、AI、news 或 automatic trading。
+
 ## Phase 0 + Phase 1 架構
 
 目前只提供 Backend（後端系統）的 monorepo 基礎、PostgreSQL schema／Migration（資料庫結構遷移）、Transaction Ledger（交易流水帳／交易唯一事實來源）與確定性的 Portfolio Engine（投資組合計算引擎）。Domain Layer（領域核心層）不依賴任何 client、LINE、LIFF、AI 或市場行情 provider。

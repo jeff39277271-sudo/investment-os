@@ -24,7 +24,7 @@ integration('LINE PostgreSQL integration', () => {
   beforeAll(async () => { await pool.query('select 1'); });
   beforeEach(async () => {
     now = new Date('2026-08-29T01:00:00.000Z');
-    await pool.query('TRUNCATE TABLE line_webhook_events, instrument_quotes, transactions, transaction_drafts, position_snapshots, instruments, portfolios, user_identities, users CASCADE');
+    await pool.query('TRUNCATE TABLE alert_trigger_events, alert_rules, line_webhook_events, instrument_quotes, transactions, transaction_drafts, position_snapshots, instruments, portfolios, user_identities, users CASCADE');
     await repository.createInstrument({ symbol: '2330', name: '台積電', exchange: 'TWSE', market: 'TW', currency: 'TWD', assetType: 'EQUITY', providerSymbol: 'TWSE:2330' });
     messaging = new FakeLineMessagingClient();
     adapter = new LineWebhookAdapter(new LineApplicationService(repository), new TransactionApplicationService(repository, () => now), messaging, () => now);

@@ -9,7 +9,7 @@ const db = createDb(pool);
 
 integration('development instrument seed', () => {
   beforeAll(async () => { await pool.query('select 1'); });
-  beforeEach(async () => { await pool.query('TRUNCATE TABLE line_webhook_events, instrument_quotes, transactions, transaction_drafts, position_snapshots, instruments, portfolios, user_identities, users CASCADE'); });
+  beforeEach(async () => { await pool.query('TRUNCATE TABLE alert_trigger_events, alert_rules, line_webhook_events, instrument_quotes, transactions, transaction_drafts, position_snapshots, instruments, portfolios, user_identities, users CASCADE'); });
   afterAll(async () => pool.end());
 
   it('upserts the development master by symbol and exchange without duplicates', async () => {

@@ -6,6 +6,9 @@ export const transactionSourceEnum = pgEnum('transaction_source', ['LINE', 'LIFF
 export const transactionStatusEnum = pgEnum('transaction_status', ['CONFIRMED', 'VOIDED']);
 export const transactionDraftStatusEnum = pgEnum('transaction_draft_status', ['DRAFT', 'CONFIRMED', 'CANCELLED', 'EXPIRED']);
 export const lineWebhookEventStatusEnum = pgEnum('line_webhook_event_status', ['PROCESSING', 'COMPLETED', 'FAILED']);
+export const alertRuleTypeEnum = pgEnum('alert_rule_type', ['STOP_LOSS', 'TAKE_PROFIT']);
+export const alertRuleStatusEnum = pgEnum('alert_rule_status', ['ACTIVE', 'PAUSED', 'ARCHIVED']);
+export const alertConditionStateEnum = pgEnum('alert_condition_state', ['CLEAR', 'BREACHED']);
 
 export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -103,6 +106,33 @@ export const transactions = pgTable('transactions', {
   idempotencyUnique: unique().on(table.portfolioId, table.idempotencyKey),
   draftUnique: unique().on(table.draftId),
 }));
+
+export const alertRules = pgTable('alert_rules', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id),
+  portfolioId: uuid('portfolio_id').notNull().references(() => portfolios.id),
+  instrumentId: uuid('instrument_id').notNull().references(() => instruments.id),
+  type: alertRuleTypeEnum('type').notNull(),
+  triggerPrice: numeric('trigger_price', { precision: 30, scale: 12 }).notNull(),
+  currency: text('currency').notNull(),
+  status: alertRuleStatusEnum('status').notNull().default('ACTIVE'),
+  conditionState: alertConditionStateEnum('condition_state').notNull().default('CLEAR'),
+  lastEvaluatedAt: timestamp('last_evaluated_at', { withTimezone: true }),
+  lastTriggeredAt: timestamp('last_triggered_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const alertTriggerEvents = pgTable('alert_trigger_events', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  alertRuleId: uuid('alert_rule_id').notNull().references(() => alertRules.id),
+  instrumentId: uuid('instrument_id').notNull().references(() => instruments.id),
+  quoteId: uuid('quote_id').notNull().references(() => instrumentQuotes.id),
+  observedPrice: numeric('observed_price', { precision: 30, scale: 12 }).notNull(),
+  triggerPrice: numeric('trigger_price', { precision: 30, scale: 12 }).notNull(),
+  quoteAt: timestamp('quote_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({ ruleQuoteUnique: unique().on(table.alertRuleId, table.quoteId) }));
 
 export const positionSnapshots = pgTable('position_snapshots', {
   portfolioId: uuid('portfolio_id').notNull().references(() => portfolios.id),
