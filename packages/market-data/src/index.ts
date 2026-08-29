@@ -1,5 +1,8 @@
 import { Decimal } from 'decimal.js';
 import type { Currency } from '@investment-os/shared';
+import { FugleMarketDataProvider, type FugleMarketDataProviderOptions, type MarketDataLogger } from './fugle.js';
+
+export * from './fugle.js';
 
 export type MarketDataInstrument = { id: string; symbol: string; currency: Currency; market: string; exchange: string; providerSymbol: string };
 export type Quote = { instrumentId: string; symbol: string; price: Decimal; currency: Currency; quoteAt: Date; receivedAt: Date; source: string };
@@ -38,9 +41,18 @@ export class FakeMarketDataProvider implements MarketDataProvider {
   getQuotes(instruments: readonly MarketDataInstrument[]): Promise<Quote[]> { return Promise.all(instruments.map((instrument) => this.getQuote(instrument))); }
 }
 
-export function createConfiguredMarketDataProvider(config: { environment: string; provider?: string; clock?: () => Date }): MarketDataProvider {
+export function createConfiguredMarketDataProvider(config: { environment: string; provider?: string; apiKey?: string; clock?: () => Date; fetcher?: typeof fetch; logger?: MarketDataLogger }): MarketDataProvider {
   if (!config.provider) throw new MarketDataConfigurationError('market data provider is not configured');
-  if (config.provider !== 'FAKE') throw new MarketDataConfigurationError(`unsupported market data provider: ${config.provider}`);
-  if (config.environment === 'production') throw new MarketDataConfigurationError('fake market data provider is forbidden in production');
-  return new FakeMarketDataProvider(config.clock);
+  const provider = config.provider.toLowerCase();
+  if (provider === 'none') throw new MarketDataConfigurationError('market data provider is disabled');
+  if (provider === 'fake') {
+    if (config.environment === 'production') throw new MarketDataConfigurationError('fake market data provider is forbidden in production');
+    return new FakeMarketDataProvider(config.clock);
+  }
+  if (provider === 'fugle') {
+    if (!config.apiKey) throw new MarketDataConfigurationError('FUGLE_API_KEY is required when MARKET_DATA_PROVIDER=fugle');
+    const options: FugleMarketDataProviderOptions = { apiKey: config.apiKey, clock: config.clock, fetcher: config.fetcher, logger: config.logger };
+    return new FugleMarketDataProvider(options);
+  }
+  throw new MarketDataConfigurationError(`unsupported market data provider: ${config.provider}`);
 }

@@ -3,7 +3,7 @@ import { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb, InvestmentRepository } from '@investment-os/db';
 import { Decimal, DomainValidationError } from '@investment-os/domain';
-import { FakeMarketDataProvider, QuoteFreshnessPolicy } from '@investment-os/market-data';
+import { FakeMarketDataProvider, FugleMarketDataProvider, QuoteFreshnessPolicy } from '@investment-os/market-data';
 import { ApplicationAuthorizationError, MarketDataApplicationService } from './index.js';
 
 const integration = process.env.RUN_POSTGRES_INTEGRATION === 'true' ? describe : describe.skip;
@@ -87,5 +87,23 @@ integration('market data persistence and valuation', () => {
   it('refreshes through the provider abstraction without provider SDK dependencies', async () => {
     const f = await fixture(); const stored = await service.refreshQuote(f.instrument.id, new FakeMarketDataProvider(() => now));
     expect(stored.price).toBe('1300'); expect(stored.source).toBe('FAKE_DEVELOPMENT');
+  });
+
+  it('persists normalized Fugle quotes idempotently without mutating transactions or evaluating alerts', async () => {
+    const f = await fixture(); await transaction(f, 'BUY', '2', '1200');
+    const quoteAt = new Date('2026-08-29T01:59:00.000Z');
+    const lastUpdated = `${quoteAt.getTime()}000`;
+    const fetcher = (async () => new Response(`{"symbol":"2330","exchange":"TWSE","lastPrice":1300.000000000001,"lastUpdated":${lastUpdated}}`, { status: 200 })) as typeof fetch;
+    const provider = new FugleMarketDataProvider({ apiKey: 'integration-test-key', fetcher, clock: () => now, logger: { log() {} } });
+    const transactionsBefore = await repository.listTransactions(f.portfolio.id);
+
+    await service.refreshQuote(f.instrument.id, provider);
+    await service.refreshQuote(f.instrument.id, provider);
+
+    expect(Number((await pool.query('select count(*) from instrument_quotes')).rows[0].count)).toBe(1);
+    expect((await repository.getLatestQuote(f.instrument.id))?.price).toBe('1300.000000000001');
+    expect(await repository.listTransactions(f.portfolio.id)).toEqual(transactionsBefore);
+    expect(Number((await pool.query('select count(*) from alert_trigger_events')).rows[0].count)).toBe(0);
+    expect((await service.getPortfolioValuation(f.user.id, f.portfolio.id)).quotes[0]).toMatchObject({ status: 'STALE', quoteAt, source: 'FUGLE' });
   });
 });

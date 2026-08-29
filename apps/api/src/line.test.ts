@@ -45,6 +45,8 @@ describe('LINE adapter primitives', () => {
       expect(health.headers.get('content-type')).toContain('application/json');
       const unknown = await fetch(`${baseUrl}/unknown`);
       expect(unknown.status).toBe(404); expect(adapter.handle).not.toHaveBeenCalled();
+      const quoteRoute = await fetch(`${baseUrl}/api/quotes/2330`);
+      expect(quoteRoute.status).toBe(404);
     });
   });
 

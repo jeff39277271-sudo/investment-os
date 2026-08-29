@@ -1,6 +1,6 @@
 # Investment OS
 
-Investment OS 是以 LINE + LIFF 為 V1 入口的個人投資紀錄與研究系統。此 repository 目前完成 Phase 0、Phase 1、Phase 1.5 與 Phase 2：TypeScript Monorepo（單一程式碼倉庫多模組架構）、PostgreSQL schema/migration、以 `transactions` 為唯一 source of truth（資產真相來源）的交易核心，以及 LINE Messaging API（LINE 訊息 API）adapter。
+Investment OS 是以 LINE + LIFF 為 V1 入口的個人投資紀錄與研究系統。此 repository 目前完成 Phase 0 至 Phase 3C1 的既定範圍：TypeScript Monorepo（單一程式碼倉庫多模組架構）、PostgreSQL schema/migration、以 `transactions` 為唯一 source of truth（資產真相來源）的交易核心、LINE Messaging API（LINE 訊息 API）adapter、行情基礎層、價格警示規則，以及 Fugle live quote 的手動匯入路徑。
 
 ## 本機執行
 
@@ -75,6 +75,32 @@ Phase 3A 刻意不新增 public portfolio/quote API route：目前尚無通用 s
 PostgreSQL `alert_trigger_events` 是 immutable audit ledger（不可變觸發稽核流水帳），不是 notification delivery（通知投遞紀錄）。Evaluation 以 transaction + rule row `FOR UPDATE` lock，原子更新 condition state 並插入 event；`(alert_rule_id, quote_id)` unique constraint 防止同 rule/quote 併發重複觸發。Trigger 絕不建立 draft、transaction、broker order 或 LINE push。
 
 Phase 3B 沒有新增 public alerts API 或 LINE command，因目前沒有完整 session/auth API。也不包含 live provider、polling、scheduler、worker、notification queue、percentage/trailing stop、AI、news 或 automatic trading。
+
+## Phase 3C1 Fugle Live Market Provider（Fugle 真實行情供應商）
+
+`FugleMarketDataProvider` 實作既有 `MarketDataProvider`，使用 instrument master 的 `providerSymbol` 呼叫 Fugle HTTP API 的 `GET /intraday/quote/{symbol}`，並以 `X-API-KEY` header 驗證。它將 `lastPrice` 以未先經過 JavaScript `Number` 的 Decimal-safe 方式正規化，並把 Fugle 的 microsecond `lastUpdated` 保存為 `quoteAt`、本機接收時間保存為 `receivedAt`。行情仍透過 `MarketDataApplicationService` 寫入既有 `instrument_quotes`；不直接操作 DB，也不會執行 alert evaluation、LINE push 或任何交易動作。
+
+本機 development 可在 `.env` 使用 deterministic fake provider：
+
+```dotenv
+MARKET_DATA_PROVIDER=fake
+MARKET_DATA_STALE_AFTER_MS=300000
+```
+
+要明確改用 Fugle 時，請自行在未納入 Git 的 `.env` 設定：
+
+```dotenv
+MARKET_DATA_PROVIDER=fugle
+FUGLE_API_KEY=<your-api-key>
+```
+
+完成 `pnpm db:migrate` 與 `pnpm db:seed:dev` 後，可手動擷取並持久化單一商品行情：
+
+```powershell
+pnpm market:refresh 2330
+```
+
+命令會從 repository root `.env` 載入設定，輸出安全的 symbol、price、currency、`quoteAt`、`receivedAt`、source 與 freshness，不輸出 API key。`MARKET_DATA_PROVIDER` 未設定、設為 `none`、production 使用 `fake`，或 Fugle 缺少 `FUGLE_API_KEY` 時都會明確失敗，不會 silent fallback（靜默退回假資料）。Phase 3C1 是 manual ingestion path（手動行情匯入路徑）；沒有 scheduler、worker、alert notification、LINE market command 或 public quote API。
 
 ## Phase 0 + Phase 1 架構
 

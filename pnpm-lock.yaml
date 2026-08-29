@@ -69,6 +69,9 @@ importers:
       '@investment-os/line-ui':
         specifier: workspace:*
         version: link:../../packages/line-ui
+      '@investment-os/market-data':
+        specifier: workspace:*
+        version: link:../../packages/market-data
 
   apps/dashboard: {}
 

@@ -12,7 +12,8 @@
     "format": "prettier --write .",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:seed:dev": "pnpm --filter @investment-os/db seed:dev"
+    "db:seed:dev": "pnpm --filter @investment-os/db seed:dev",
+    "market:refresh": "pnpm --filter @investment-os/api market:refresh"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
