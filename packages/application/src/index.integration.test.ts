@@ -39,7 +39,7 @@ integration('PostgreSQL persistence and application safety', () => {
   });
   beforeEach(async () => {
     now = new Date('2026-08-16T00:00:00.000Z');
-    await pool.query('TRUNCATE TABLE transactions, transaction_drafts, position_snapshots, instruments, portfolios, user_identities, users CASCADE');
+    await pool.query('TRUNCATE TABLE line_webhook_events, transactions, transaction_drafts, position_snapshots, instruments, portfolios, user_identities, users CASCADE');
   });
   afterAll(async () => pool.end());
 

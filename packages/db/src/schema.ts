@@ -5,6 +5,7 @@ export const transactionSideEnum = pgEnum('transaction_side', ['BUY', 'SELL']);
 export const transactionSourceEnum = pgEnum('transaction_source', ['LINE', 'LIFF', 'MOBILE_APP', 'IMPORT', 'MANUAL']);
 export const transactionStatusEnum = pgEnum('transaction_status', ['CONFIRMED', 'VOIDED']);
 export const transactionDraftStatusEnum = pgEnum('transaction_draft_status', ['DRAFT', 'CONFIRMED', 'CANCELLED', 'EXPIRED']);
+export const lineWebhookEventStatusEnum = pgEnum('line_webhook_event_status', ['PROCESSING', 'COMPLETED', 'FAILED']);
 
 export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -103,3 +104,14 @@ export const positionSnapshots = pgTable('position_snapshots', {
   unrealizedPnl: numeric('unrealized_pnl', { precision: 30, scale: 12 }),
   calculatedAt: timestamp('calculated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => ({ snapshotPrimaryKey: primaryKey({ columns: [table.portfolioId, table.instrumentId] }) }));
+
+export const lineWebhookEvents = pgTable('line_webhook_events', {
+  eventId: text('event_id').primaryKey(),
+  status: lineWebhookEventStatusEnum('status').notNull().default('PROCESSING'),
+  eventType: text('event_type').notNull(),
+  providerUserIdHash: text('provider_user_id_hash'),
+  receivedAt: timestamp('received_at', { withTimezone: true }).defaultNow().notNull(),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+  lastError: text('last_error'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});

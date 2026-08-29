@@ -3,5 +3,5 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": { "build": "tsc -b", "typecheck": "tsc -b" },
-  "dependencies": { "@investment-os/domain": "workspace:*" }
+  "dependencies": { "@investment-os/application": "workspace:*", "@investment-os/db": "workspace:*", "@investment-os/line-ui": "workspace:*" }
 }

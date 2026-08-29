@@ -240,4 +240,35 @@ export class TransactionApplicationService {
   }
 }
 
+export class LineApplicationService {
+  constructor(private readonly repository: InvestmentRepository) {}
+
+  getOrCreateIdentity(providerUserId: string) {
+    if (!providerUserId.trim()) throw new ApplicationAuthorizationError('LINE user identity is missing');
+    return this.repository.getOrCreateLineUser(providerUserId);
+  }
+
+  findInstrument(symbol: string) {
+    return this.repository.findInstrumentBySymbol(symbol);
+  }
+
+  findLatestActiveDraft(userId: string) {
+    return this.repository.findLatestActiveDraft(userId);
+  }
+
+  claimWebhookEvent(eventId: string, eventType: string, providerUserIdHash?: string) {
+    if (!eventId.trim()) throw new ApplicationConflictError('LINE webhookEventId is required');
+    return this.repository.claimLineWebhookEvent(eventId, eventType, providerUserIdHash);
+  }
+
+  completeWebhookEvent(eventId: string) {
+    return this.repository.completeLineWebhookEvent(eventId);
+  }
+
+  failWebhookEvent(eventId: string, error: unknown) {
+    const message = error instanceof Error ? error.message : 'unknown LINE webhook failure';
+    return this.repository.failLineWebhookEvent(eventId, message);
+  }
+}
+
 export { summarizePortfolio };

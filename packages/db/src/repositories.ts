@@ -1,4 +1,4 @@
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, lt, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { Decimal } from 'decimal.js';
 import * as schema from './schema.js';
@@ -10,6 +10,7 @@ export type PortfolioRecord = typeof schema.portfolios.$inferSelect;
 export type InstrumentRecord = typeof schema.instruments.$inferSelect;
 export type DraftRecord = typeof schema.transactionDrafts.$inferSelect;
 export type TransactionRecord = typeof schema.transactions.$inferSelect;
+export type LineWebhookEventRecord = typeof schema.lineWebhookEvents.$inferSelect;
 
 export class RepositoryNotFoundError extends Error {
   constructor(message: string) {
@@ -67,6 +68,30 @@ export class InvestmentRepository {
     return identity;
   }
 
+  async findUserIdentity(provider: 'LINE' | 'MOBILE_AUTH', providerSubject: string): Promise<UserIdentityRecord | undefined> {
+    const [identity] = await this.db.select().from(schema.userIdentities)
+      .where(and(eq(schema.userIdentities.provider, provider), eq(schema.userIdentities.providerSubject, providerSubject))).limit(1);
+    return identity;
+  }
+
+  async getOrCreateLineUser(providerSubject: string): Promise<{ user: UserRecord; identity: UserIdentityRecord; portfolio: PortfolioRecord }> {
+    return this.db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('LINE:' || ${providerSubject}))`);
+      const [existingIdentity] = await tx.select().from(schema.userIdentities)
+        .where(and(eq(schema.userIdentities.provider, 'LINE'), eq(schema.userIdentities.providerSubject, providerSubject))).limit(1);
+      if (existingIdentity) {
+        const [user] = await tx.select().from(schema.users).where(eq(schema.users.id, existingIdentity.userId)).limit(1);
+        const [portfolio] = await tx.select().from(schema.portfolios).where(eq(schema.portfolios.userId, existingIdentity.userId)).orderBy(asc(schema.portfolios.createdAt)).limit(1);
+        if (!user || !portfolio) throw new RepositoryConflictError('LINE identity is missing its user or portfolio');
+        return { user, identity: existingIdentity, portfolio };
+      }
+      const [user] = await tx.insert(schema.users).values({}).returning();
+      const [identity] = await tx.insert(schema.userIdentities).values({ userId: user.id, provider: 'LINE', providerSubject }).returning();
+      const [portfolio] = await tx.insert(schema.portfolios).values({ userId: user.id, name: '主要投資組合', baseCurrency: user.baseCurrency }).returning();
+      return { user, identity, portfolio };
+    });
+  }
+
   async createPortfolio(values: typeof schema.portfolios.$inferInsert): Promise<PortfolioRecord> {
     const [portfolio] = await this.db.insert(schema.portfolios).values(values).returning();
     return portfolio;
@@ -85,6 +110,44 @@ export class InvestmentRepository {
   async getInstrument(instrumentId: string): Promise<InstrumentRecord | undefined> {
     const [instrument] = await this.db.select().from(schema.instruments).where(eq(schema.instruments.id, instrumentId)).limit(1);
     return instrument;
+  }
+
+  async findInstrumentBySymbol(symbol: string): Promise<InstrumentRecord | undefined> {
+    const matches = await this.db.select().from(schema.instruments).where(eq(schema.instruments.symbol, symbol)).limit(2);
+    return matches.length === 1 ? matches[0] : undefined;
+  }
+
+  async findLatestActiveDraft(userId: string): Promise<DraftRecord | undefined> {
+    const [draft] = await this.db.select().from(schema.transactionDrafts)
+      .where(and(eq(schema.transactionDrafts.userId, userId), eq(schema.transactionDrafts.status, 'DRAFT')))
+      .orderBy(desc(schema.transactionDrafts.createdAt)).limit(1);
+    return draft ? normalizeDraft(draft) : undefined;
+  }
+
+  async claimLineWebhookEvent(eventId: string, eventType: string, providerUserIdHash?: string): Promise<boolean> {
+    const inserted = await this.db.insert(schema.lineWebhookEvents).values({ eventId, eventType, providerUserIdHash })
+      .onConflictDoNothing().returning();
+    if (inserted.length > 0) return true;
+    const retried = await this.db.update(schema.lineWebhookEvents)
+      .set({ status: 'PROCESSING', lastError: null, updatedAt: new Date() })
+      .where(and(
+        eq(schema.lineWebhookEvents.eventId, eventId),
+        or(
+          eq(schema.lineWebhookEvents.status, 'FAILED'),
+          and(eq(schema.lineWebhookEvents.status, 'PROCESSING'), lt(schema.lineWebhookEvents.updatedAt, new Date(Date.now() - 5 * 60 * 1000))),
+        ),
+      )).returning();
+    return retried.length > 0;
+  }
+
+  async completeLineWebhookEvent(eventId: string): Promise<void> {
+    await this.db.update(schema.lineWebhookEvents).set({ status: 'COMPLETED', completedAt: new Date(), updatedAt: new Date() })
+      .where(eq(schema.lineWebhookEvents.eventId, eventId));
+  }
+
+  async failLineWebhookEvent(eventId: string, error: string): Promise<void> {
+    await this.db.update(schema.lineWebhookEvents).set({ status: 'FAILED', lastError: error.slice(0, 1000), updatedAt: new Date() })
+      .where(eq(schema.lineWebhookEvents.eventId, eventId));
   }
 
   async findDraftByIdempotency(userId: string, idempotencyKey: string): Promise<DraftRecord | undefined> {
