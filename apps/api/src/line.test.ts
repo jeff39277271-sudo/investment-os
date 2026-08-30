@@ -47,6 +47,8 @@ describe('LINE adapter primitives', () => {
       expect(unknown.status).toBe(404); expect(adapter.handle).not.toHaveBeenCalled();
       const quoteRoute = await fetch(`${baseUrl}/api/quotes/2330`);
       expect(quoteRoute.status).toBe(404);
+      expect((await fetch(`${baseUrl}/api/alerts`)).status).toBe(404);
+      expect((await fetch(`${baseUrl}/internal/alerts/run`, { method: 'POST' })).status).toBe(404);
     });
   });
 

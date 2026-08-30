@@ -102,6 +102,30 @@ pnpm market:refresh 2330
 
 命令會從 repository root `.env` 載入設定，輸出安全的 symbol、price、currency、`quoteAt`、`receivedAt`、source 與 freshness，不輸出 API key。`MARKET_DATA_PROVIDER` 未設定、設為 `none`、production 使用 `fake`，或 Fugle 缺少 `FUGLE_API_KEY` 時都會明確失敗，不會 silent fallback（靜默退回假資料）。Phase 3C1 是 manual ingestion path（手動行情匯入路徑）；沒有 scheduler、worker、alert notification、LINE market command 或 public quote API。
 
+## Phase 3C2 Alert Worker + Notification Delivery（警示 Worker 與通知投遞）
+
+Phase 3C2 提供 one-shot worker（單次執行 Worker）：取得 ACTIVE rules、依 instrument 去重更新行情、呼叫既有 `AlertApplicationService` 判斷 crossing，為新 `AlertTriggerEvent` 建立獨立的 `NotificationDelivery`，再透過既有 `LineMessagingClient` 主動推送 LINE。Trigger event 是市場條件事件；delivery 是通知稽核狀態，LINE 暫時失敗不會回滾 trigger 或 alert condition。
+
+先在未提交的 root `.env` 設定：
+
+```dotenv
+DATABASE_URL=postgres://...
+MARKET_DATA_PROVIDER=fugle
+FUGLE_API_KEY=<set-locally>
+LINE_CHANNEL_ACCESS_TOKEN=<set-locally>
+MARKET_DATA_STALE_AFTER_MS=300000
+```
+
+Development/test 可明確使用 `MARKET_DATA_PROVIDER=fake`；production 仍禁止 fake。執行一次監控：
+
+```powershell
+pnpm alerts:run
+```
+
+輸出只包含安全的 structured summary（結構化摘要），例如 evaluated rules、refreshed/failed quotes、new triggers 與 delivered/failed notifications，不輸出 token、API key 或 database password。Delivery 以 `(alert_trigger_event_id, channel)` DB unique constraint 做 Idempotency（冪等性／避免重複執行），並以 claim、有限 attempt count、PROCESSING lease recovery 及固定 `X-Line-Retry-Key` 保護 concurrency/retry。
+
+目前**沒有自動排程或 24/7 監控**；只有手動執行 `pnpm alerts:run` 才會跑一次。也沒有 cron、daemon、public alert/worker API、LINE 指令、自動交易或 broker order。STOP_LOSS／TAKE_PROFIT 僅傳送「條件已觸發」通知，不建立 BUY/SELL draft 或 transaction。
+
 ## Phase 0 + Phase 1 架構
 
 目前只提供 Backend（後端系統）的 monorepo 基礎、PostgreSQL schema／Migration（資料庫結構遷移）、Transaction Ledger（交易流水帳／交易唯一事實來源）與確定性的 Portfolio Engine（投資組合計算引擎）。Domain Layer（領域核心層）不依賴任何 client、LINE、LIFF、AI 或市場行情 provider。

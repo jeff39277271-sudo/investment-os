@@ -1,19 +1,9 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { ApplicationAuthorizationError, ApplicationConflictError, type LineApplicationService, type TransactionApplicationService } from '@investment-os/application';
-import { transactionConfirmationFlex, type LineMessage } from '@investment-os/line-ui';
+import { FakeLineMessagingClient, LineMessagingApiClient, type LineMessagingClient } from '@investment-os/line-ui';
+import { transactionConfirmationFlex } from '@investment-os/line-ui';
 
-export interface LineMessagingClient { reply(replyToken: string, messages: readonly LineMessage[]): Promise<void> }
-export class LineMessagingApiClient implements LineMessagingClient {
-  constructor(private readonly channelAccessToken: string, private readonly fetcher: typeof fetch = fetch) {}
-  async reply(replyToken: string, messages: readonly LineMessage[]): Promise<void> {
-    const response = await this.fetcher('https://api.line.me/v2/bot/message/reply', { method: 'POST', headers: { authorization: `Bearer ${this.channelAccessToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ replyToken, messages }) });
-    if (!response.ok) throw new Error(`LINE reply failed with status ${response.status}`);
-  }
-}
-export class FakeLineMessagingClient implements LineMessagingClient {
-  readonly replies: { replyToken: string; messages: readonly LineMessage[] }[] = [];
-  async reply(replyToken: string, messages: readonly LineMessage[]): Promise<void> { this.replies.push({ replyToken, messages }); }
-}
+export { FakeLineMessagingClient, LineMessagingApiClient, type LineMessagingClient };
 export function verifyLineSignature(rawBody: Buffer, signature: string | undefined, channelSecret: string): boolean {
   if (!signature) return false;
   const expected = Buffer.from(createHmac('sha256', channelSecret).update(rawBody).digest('base64')); const supplied = Buffer.from(signature);

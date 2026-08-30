@@ -1,1 +1,1 @@
-{"extends":"../../tsconfig.base.json","compilerOptions":{"rootDir":"src","outDir":"dist"},"references":[{"path":"../../packages/domain"}],"include":["src"]}
+{"extends":"../../tsconfig.base.json","compilerOptions":{"rootDir":"src","outDir":"dist"},"references":[{"path":"../../packages/application"},{"path":"../../packages/db"},{"path":"../../packages/line-ui"},{"path":"../../packages/market-data"}],"include":["src"]}

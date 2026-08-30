@@ -75,7 +75,23 @@ importers:
 
   apps/dashboard: {}
 
-  apps/worker: {}
+  apps/worker:
+    dependencies:
+      '@investment-os/application':
+        specifier: workspace:*
+        version: link:../../packages/application
+      '@investment-os/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@investment-os/line-ui':
+        specifier: workspace:*
+        version: link:../../packages/line-ui
+      '@investment-os/market-data':
+        specifier: workspace:*
+        version: link:../../packages/market-data
+      decimal.js:
+        specifier: ^10.4.3
+        version: 10.6.0
 
   packages/ai-tools: {}
 

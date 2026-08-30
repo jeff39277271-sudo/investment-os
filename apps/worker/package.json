@@ -1,1 +1,1 @@
-{"name":"@investment-os/worker","version":"0.1.0","type":"module","scripts":{"build":"tsc -b","typecheck":"tsc -b"}}
+{"name":"@investment-os/worker","version":"0.1.0","type":"module","main":"./dist/index.js","types":"./dist/index.d.ts","scripts":{"build":"tsc -b","typecheck":"tsc -b","alerts:run":"tsc -b && node --env-file-if-exists=../../.env dist/main.js"},"dependencies":{"@investment-os/application":"workspace:*","@investment-os/db":"workspace:*","@investment-os/line-ui":"workspace:*","@investment-os/market-data":"workspace:*","decimal.js":"^10.4.3"}}

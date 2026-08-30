@@ -1,4 +1,4 @@
-import { pgEnum, pgTable, text, timestamp, uuid, numeric, jsonb, unique, primaryKey } from 'drizzle-orm/pg-core';
+import { pgEnum, pgTable, text, timestamp, uuid, numeric, jsonb, unique, primaryKey, integer, boolean } from 'drizzle-orm/pg-core';
 
 export const providerEnum = pgEnum('identity_provider', ['LINE', 'MOBILE_AUTH']);
 export const transactionSideEnum = pgEnum('transaction_side', ['BUY', 'SELL']);
@@ -9,6 +9,8 @@ export const lineWebhookEventStatusEnum = pgEnum('line_webhook_event_status', ['
 export const alertRuleTypeEnum = pgEnum('alert_rule_type', ['STOP_LOSS', 'TAKE_PROFIT']);
 export const alertRuleStatusEnum = pgEnum('alert_rule_status', ['ACTIVE', 'PAUSED', 'ARCHIVED']);
 export const alertConditionStateEnum = pgEnum('alert_condition_state', ['CLEAR', 'BREACHED']);
+export const notificationChannelEnum = pgEnum('notification_channel', ['LINE']);
+export const notificationDeliveryStatusEnum = pgEnum('notification_delivery_status', ['PENDING', 'PROCESSING', 'DELIVERED', 'FAILED']);
 
 export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -133,6 +135,23 @@ export const alertTriggerEvents = pgTable('alert_trigger_events', {
   quoteAt: timestamp('quote_at', { withTimezone: true }).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => ({ ruleQuoteUnique: unique().on(table.alertRuleId, table.quoteId) }));
+
+export const notificationDeliveries = pgTable('notification_deliveries', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id),
+  alertTriggerEventId: uuid('alert_trigger_event_id').notNull().references(() => alertTriggerEvents.id),
+  channel: notificationChannelEnum('channel').notNull(),
+  recipientIdentityId: uuid('recipient_identity_id').references(() => userIdentities.id),
+  status: notificationDeliveryStatusEnum('status').notNull().default('PENDING'),
+  attemptCount: integer('attempt_count').notNull().default(0),
+  retryable: boolean('retryable').notNull().default(true),
+  lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }),
+  lockedAt: timestamp('locked_at', { withTimezone: true }),
+  deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+  lastErrorCode: text('last_error_code'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({ triggerChannelUnique: unique().on(table.alertTriggerEventId, table.channel) }));
 
 export const positionSnapshots = pgTable('position_snapshots', {
   portfolioId: uuid('portfolio_id').notNull().references(() => portfolios.id),
