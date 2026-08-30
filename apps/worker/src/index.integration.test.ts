@@ -7,6 +7,8 @@ import { FakeLineMessagingClient, LineMessagingError, type LineMessagingClient }
 import { FakeMarketDataProvider, QuoteFreshnessPolicy, type MarketDataInstrument, type MarketDataProvider, type Quote } from '@investment-os/market-data';
 import { Decimal } from 'decimal.js';
 import { AlertMonitoringWorker } from './index.js';
+import { MarketSessionPolicy } from './market-session.js';
+import { ScheduledAlertRunner } from './schedule.js';
 
 const integration = process.env.RUN_POSTGRES_INTEGRATION === 'true' ? describe : describe.skip;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL ?? 'postgres://investment:investment@localhost:5432/investment_os' });
@@ -145,5 +147,24 @@ integration('one-shot alert monitoring and LINE notification delivery', () => {
     expect(reclaimedLine.pushes).toHaveLength(1);
     expect(reclaimedLine.pushes[0]?.retryKey).toBe((await repository.getNotificationDelivery(event.id))?.id);
     expect(await repository.getNotificationDelivery(event.id)).toMatchObject({ status: 'DELIVERED', attemptCount: 3 });
+  });
+
+  it('runs deterministic scheduled Fake provider to Fake LINE E2E only during TWSE session', async () => {
+    now = new Date('2026-08-31T01:00:00.000Z'); // Monday 09:00 Asia/Taipei
+    const f = await fixture('2330', true, 'STOP_LOSS', '1400'); const fakeProvider = new FakeMarketDataProvider(() => now); let quoteCalls = 0;
+    const provider: MarketDataProvider = {
+      getQuote: async (instrument) => { quoteCalls += 1; return fakeProvider.getQuote(instrument); },
+      getQuotes: async (instruments) => Promise.all(instruments.map(async (instrument) => { quoteCalls += 1; return fakeProvider.getQuote(instrument); })),
+    };
+    const line = new FakeLineMessagingClient();
+    const scheduledWorker = worker(provider, line); const logs: unknown[] = [];
+    const scheduler = new ScheduledAlertRunner(repository, scheduledWorker, new MarketSessionPolicy(), { intervalMs: 60_000, leaseMs: 120_000, ownerId: 'scheduled-e2e', clock: () => now, logger: { log: (event) => logs.push(event) } });
+    expect(await scheduler.tick()).toMatchObject({ result: 'COMPLETED', summary: { alertsTriggered: 1, notificationsDelivered: 1 } });
+    expect(await repository.listAlertTriggerEvents(f.rule.id)).toHaveLength(1); expect(line.pushes).toHaveLength(1); expect(quoteCalls).toBe(1);
+
+    now = new Date('2026-08-31T00:59:59.000Z'); // 08:59:59 Asia/Taipei
+    expect(await scheduler.tick()).toMatchObject({ result: 'SKIPPED_MARKET_CLOSED' });
+    expect(await repository.listAlertTriggerEvents(f.rule.id)).toHaveLength(1); expect(line.pushes).toHaveLength(1); expect(quoteCalls).toBe(1);
+    expect(logs).toHaveLength(2);
   });
 });

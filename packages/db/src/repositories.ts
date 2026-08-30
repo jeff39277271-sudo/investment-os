@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { Decimal } from 'decimal.js';
 import * as schema from './schema.js';
@@ -15,6 +15,7 @@ export type QuoteRecord = typeof schema.instrumentQuotes.$inferSelect;
 export type AlertRuleRecord = typeof schema.alertRules.$inferSelect;
 export type AlertTriggerEventRecord = typeof schema.alertTriggerEvents.$inferSelect;
 export type NotificationDeliveryRecord = typeof schema.notificationDeliveries.$inferSelect;
+export type SchedulerLeaseRecord = typeof schema.schedulerLeases.$inferSelect;
 export type AlertDeliveryCandidate = { event: AlertTriggerEventRecord; rule: AlertRuleRecord; instrument: InstrumentRecord };
 export type NotificationDeliveryContext = { delivery: NotificationDeliveryRecord; event: AlertTriggerEventRecord; rule: AlertRuleRecord; instrument: InstrumentRecord; quote: QuoteRecord; recipient?: UserIdentityRecord };
 export type AlertEvaluationDecision = { result: string; evaluated: boolean; nextConditionState: 'CLEAR' | 'BREACHED'; trigger: boolean };
@@ -206,7 +207,9 @@ export class InvestmentRepository {
     return events.map(normalizeAlertTriggerEvent);
   }
 
-  async listAlertDeliveryCandidates(): Promise<AlertDeliveryCandidate[]> {
+  async listAlertDeliveryCandidates(instrumentIds?: readonly string[]): Promise<AlertDeliveryCandidate[]> {
+    if (instrumentIds?.length === 0) return [];
+    const missingDelivery = isNull(schema.notificationDeliveries.id);
     const rows = await this.db.select({ event: schema.alertTriggerEvents, rule: schema.alertRules, instrument: schema.instruments })
       .from(schema.alertTriggerEvents)
       .innerJoin(schema.alertRules, eq(schema.alertRules.id, schema.alertTriggerEvents.alertRuleId))
@@ -215,7 +218,7 @@ export class InvestmentRepository {
         eq(schema.notificationDeliveries.alertTriggerEventId, schema.alertTriggerEvents.id),
         eq(schema.notificationDeliveries.channel, 'LINE'),
       ))
-      .where(isNull(schema.notificationDeliveries.id))
+      .where(instrumentIds ? and(missingDelivery, inArray(schema.alertTriggerEvents.instrumentId, [...instrumentIds])) : missingDelivery)
       .orderBy(asc(schema.alertTriggerEvents.createdAt), asc(schema.alertTriggerEvents.id));
     return rows.map(({ event, rule, instrument }) => ({ event: normalizeAlertTriggerEvent(event), rule: normalizeAlertRule(rule), instrument }));
   }
@@ -233,16 +236,22 @@ export class InvestmentRepository {
     return existing;
   }
 
-  async listDispatchableLineDeliveryIds(maxAttempts: number, leaseExpiredBefore: Date): Promise<string[]> {
+  async listDispatchableLineDeliveryIds(maxAttempts: number, leaseExpiredBefore: Date, instrumentIds?: readonly string[]): Promise<string[]> {
+    if (instrumentIds?.length === 0) return [];
+    const dispatchable = and(
+      eq(schema.notificationDeliveries.channel, 'LINE'),
+      lt(schema.notificationDeliveries.attemptCount, maxAttempts),
+      or(
+        eq(schema.notificationDeliveries.status, 'PENDING'),
+        and(eq(schema.notificationDeliveries.status, 'FAILED'), eq(schema.notificationDeliveries.retryable, true)),
+        and(eq(schema.notificationDeliveries.status, 'PROCESSING'), lt(schema.notificationDeliveries.lockedAt, leaseExpiredBefore)),
+      ),
+    );
     const rows = await this.db.select({ id: schema.notificationDeliveries.id }).from(schema.notificationDeliveries)
+      .innerJoin(schema.alertTriggerEvents, eq(schema.alertTriggerEvents.id, schema.notificationDeliveries.alertTriggerEventId))
       .where(and(
-        eq(schema.notificationDeliveries.channel, 'LINE'),
-        lt(schema.notificationDeliveries.attemptCount, maxAttempts),
-        or(
-          eq(schema.notificationDeliveries.status, 'PENDING'),
-          and(eq(schema.notificationDeliveries.status, 'FAILED'), eq(schema.notificationDeliveries.retryable, true)),
-          and(eq(schema.notificationDeliveries.status, 'PROCESSING'), lt(schema.notificationDeliveries.lockedAt, leaseExpiredBefore)),
-        ),
+        dispatchable,
+        ...(instrumentIds ? [inArray(schema.alertTriggerEvents.instrumentId, [...instrumentIds])] : []),
       )).orderBy(asc(schema.notificationDeliveries.createdAt), asc(schema.notificationDeliveries.id));
     return rows.map(({ id }) => id);
   }
@@ -297,6 +306,27 @@ export class InvestmentRepository {
     const [delivery] = await this.db.select().from(schema.notificationDeliveries)
       .where(and(eq(schema.notificationDeliveries.alertTriggerEventId, eventId), eq(schema.notificationDeliveries.channel, 'LINE'))).limit(1);
     return delivery;
+  }
+
+  async acquireSchedulerLease(jobName: string, ownerId: string, now: Date, lockedUntil: Date): Promise<boolean> {
+    const rows = await this.db.insert(schema.schedulerLeases).values({ jobName, ownerId, lockedUntil, updatedAt: now })
+      .onConflictDoUpdate({
+        target: schema.schedulerLeases.jobName,
+        set: { ownerId, lockedUntil, updatedAt: now },
+        setWhere: or(lte(schema.schedulerLeases.lockedUntil, now), eq(schema.schedulerLeases.ownerId, ownerId)),
+      }).returning();
+    return rows.length === 1;
+  }
+
+  async renewSchedulerLease(jobName: string, ownerId: string, now: Date, lockedUntil: Date): Promise<boolean> {
+    const rows = await this.db.update(schema.schedulerLeases).set({ lockedUntil, updatedAt: now })
+      .where(and(eq(schema.schedulerLeases.jobName, jobName), eq(schema.schedulerLeases.ownerId, ownerId), gt(schema.schedulerLeases.lockedUntil, now))).returning();
+    return rows.length === 1;
+  }
+
+  async releaseSchedulerLease(jobName: string, ownerId: string, now: Date): Promise<void> {
+    await this.db.update(schema.schedulerLeases).set({ lockedUntil: now, updatedAt: now })
+      .where(and(eq(schema.schedulerLeases.jobName, jobName), eq(schema.schedulerLeases.ownerId, ownerId)));
   }
 
   async evaluateAlertRuleAtomic(

@@ -124,7 +124,33 @@ pnpm alerts:run
 
 輸出只包含安全的 structured summary（結構化摘要），例如 evaluated rules、refreshed/failed quotes、new triggers 與 delivered/failed notifications，不輸出 token、API key 或 database password。Delivery 以 `(alert_trigger_event_id, channel)` DB unique constraint 做 Idempotency（冪等性／避免重複執行），並以 claim、有限 attempt count、PROCESSING lease recovery 及固定 `X-Line-Retry-Key` 保護 concurrency/retry。
 
-目前**沒有自動排程或 24/7 監控**；只有手動執行 `pnpm alerts:run` 才會跑一次。也沒有 cron、daemon、public alert/worker API、LINE 指令、自動交易或 broker order。STOP_LOSS／TAKE_PROFIT 僅傳送「條件已觸發」通知，不建立 BUY/SELL draft 或 transaction。
+`pnpm alerts:run` 保持 manual one-shot（手動單次執行），不套用市場時段限制，方便明確的維運／debug 操作；Phase 3B 的 FRESH／STALE 安全判斷仍不可繞過。STOP_LOSS／TAKE_PROFIT 僅傳送「條件已觸發」通知，不建立 BUY/SELL draft 或 transaction。
+
+## Phase 3C3 Scheduler + Market Hours Policy（排程器與市場時段政策）
+
+`apps/worker` 提供獨立的 Scheduled Alert Monitoring Runtime（排程式警示監控執行程序）：啟動後立即執行第一個 market-session tick，完成後才等待下一個 interval，因此同一 process 不會 overlap。PostgreSQL `scheduler_leases` 以 job `ALERT_MONITORING`、owner、`locked_until` 實作跨 process atomic lease；有效 lease 不可被其他 scheduler 取得，執行期間會續租，crash 後則可在 lease expiry 後接手。
+
+```dotenv
+ALERT_MONITOR_INTERVAL_MS=60000
+ALERT_SCHEDULER_LEASE_MS=120000
+TW_MARKET_CLOSED_DATES=
+```
+
+`ALERT_MONITOR_INTERVAL_MS` 最低 1000 ms，預設 60000 ms；實際值應依使用者自己的 market-data plan／quota 調整，不代表 Fugle quota 建議。`ALERT_SCHEDULER_LEASE_MS` 預設 120000 ms，scheduler 會在長時間 worker run 中續租。`TW_MARKET_CLOSED_DATES` 接受以 Asia/Taipei market date 表示的逗號分隔 `YYYY-MM-DD`；repository 不預填或猜測假日。
+
+目前 MarketSessionPolicy（市場交易時段政策）只支援 `market=TW` 且 exchange 為 `TWSE`／`TPEx`。依 [TWSE 官方交易制度](https://www.twse.com.tw/en/products/system/trading.html)與 [TPEx 官方交易制度](https://www.tpex.org.tw/en-us/mainboard/trading/rules/system.html)，regular session 使用 Asia/Taipei 週一至週五 `[09:00:00, 13:30:00)`：09:00 開始，13:30 boundary 已關閉。週末、configured closed date、session 外時間與 unsupported market 都不 refresh 行情、不 evaluate trigger、不呼叫 LINE。
+
+Official TWSE holiday calendar adapter（證交所官方假日日曆介接）目前 **NOT IMPLEMENTED**；使用 explicit configured closed dates。即使設定遺漏休市日，Phase 3B quote freshness 仍是最後安全網，STALE quote 不會觸發。
+
+啟動長駐 scheduler：
+
+```powershell
+pnpm alerts:schedule
+```
+
+停止可使用 `Ctrl+C`；runtime 支援 SIGINT／SIGTERM，會停止新 tick、等待 in-flight run 完成並關閉 PostgreSQL resources。單次 worker 暫時失敗會輸出 safe structured log，下一 cadence 繼續。Production 仍禁止 fake provider fallback。
+
+Phase 3C3 只是 production-capable runtime，**不代表已部署或 24/7 運作**；只有實際啟動 `pnpm alerts:schedule` 才會持續監控。目前沒有 cloud deployment、Windows Task Scheduler、cron、public scheduler API 或自動交易。LINE proactive push 是 worker 對 LINE API 的 outbound request，不需要 Cloudflare tunnel；tunnel 僅用於 LINE inbound webhook 連到本機 API。
 
 ## Phase 0 + Phase 1 架構
 

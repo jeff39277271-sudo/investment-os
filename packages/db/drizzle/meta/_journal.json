@@ -36,6 +36,13 @@
       "when": 1788014138062,
       "tag": "0004_loose_professor_monster",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788074888065,
+      "tag": "0005_stiff_iron_man",
+      "breakpoints": true
     }
   ]
 }

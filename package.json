@@ -14,7 +14,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:seed:dev": "pnpm --filter @investment-os/db seed:dev",
     "market:refresh": "pnpm --filter @investment-os/api market:refresh",
-    "alerts:run": "pnpm --filter @investment-os/worker alerts:run"
+    "alerts:run": "pnpm --filter @investment-os/worker alerts:run",
+    "alerts:schedule": "pnpm --filter @investment-os/worker alerts:schedule"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

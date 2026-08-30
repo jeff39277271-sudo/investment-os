@@ -8,6 +8,7 @@ export type AlertWorkerSummary = {
   notificationsDelivered: number; notificationsFailed: number;
 };
 export type AlertMonitoringWorkerOptions = { maxDeliveryAttempts?: number; processingLeaseMs?: number; clock?: () => Date };
+export type AlertWorkerRunOptions = { instrumentIds?: readonly string[] };
 
 export class AlertMonitoringWorker {
   private readonly maxDeliveryAttempts: number;
@@ -27,9 +28,10 @@ export class AlertMonitoringWorker {
     this.clock = options.clock ?? (() => new Date());
   }
 
-  async runOnce(): Promise<AlertWorkerSummary> {
+  async runOnce(options: AlertWorkerRunOptions = {}): Promise<AlertWorkerSummary> {
     const summary: AlertWorkerSummary = { rulesEvaluated: 0, quotesRefreshed: 0, quoteFailures: 0, alertsTriggered: 0, notificationsDelivered: 0, notificationsFailed: 0 };
-    const rules = await this.repository.listActiveAlertRules();
+    const allowed = options.instrumentIds ? new Set(options.instrumentIds) : undefined;
+    const rules = (await this.repository.listActiveAlertRules()).filter((rule) => !allowed || allowed.has(rule.instrumentId));
     const refreshSucceeded = new Set<string>();
     const instrumentIds = [...new Set(rules.map(({ instrumentId }) => instrumentId))];
     for (const instrumentId of instrumentIds) {
@@ -45,9 +47,9 @@ export class AlertMonitoringWorker {
       } catch { /* Isolate one invalid rule from the rest of the run. */ }
     }
 
-    summary.notificationsFailed += await this.createMissingDeliveries();
+    summary.notificationsFailed += await this.createMissingDeliveries(options.instrumentIds);
     const leaseExpiredBefore = new Date(this.clock().getTime() - this.processingLeaseMs);
-    const ids = await this.repository.listDispatchableLineDeliveryIds(this.maxDeliveryAttempts, leaseExpiredBefore);
+    const ids = await this.repository.listDispatchableLineDeliveryIds(this.maxDeliveryAttempts, leaseExpiredBefore, options.instrumentIds);
     for (const id of ids) {
       const now = this.clock();
       const claimed = await this.repository.claimLineNotificationDelivery(id, this.maxDeliveryAttempts, now, new Date(now.getTime() - this.processingLeaseMs));
@@ -71,9 +73,9 @@ export class AlertMonitoringWorker {
     return summary;
   }
 
-  private async createMissingDeliveries(): Promise<number> {
+  private async createMissingDeliveries(instrumentIds?: readonly string[]): Promise<number> {
     let missingRecipients = 0;
-    for (const candidate of await this.repository.listAlertDeliveryCandidates()) {
+    for (const candidate of await this.repository.listAlertDeliveryCandidates(instrumentIds)) {
       const recipient = await this.repository.findUserIdentityByUserId(candidate.rule.userId, 'LINE');
       await this.repository.ensureLineNotificationDelivery(candidate.event.id, candidate.rule.userId, recipient?.id, this.clock());
       if (!recipient) missingRecipients += 1;
@@ -81,3 +83,6 @@ export class AlertMonitoringWorker {
     return missingRecipients;
   }
 }
+
+export * from './market-session.js';
+export * from './schedule.js';

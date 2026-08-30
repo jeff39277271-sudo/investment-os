@@ -153,6 +153,13 @@ export const notificationDeliveries = pgTable('notification_deliveries', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => ({ triggerChannelUnique: unique().on(table.alertTriggerEventId, table.channel) }));
 
+export const schedulerLeases = pgTable('scheduler_leases', {
+  jobName: text('job_name').primaryKey(),
+  ownerId: text('owner_id').notNull(),
+  lockedUntil: timestamp('locked_until', { withTimezone: true }).notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+});
+
 export const positionSnapshots = pgTable('position_snapshots', {
   portfolioId: uuid('portfolio_id').notNull().references(() => portfolios.id),
   instrumentId: uuid('instrument_id').notNull().references(() => instruments.id),
